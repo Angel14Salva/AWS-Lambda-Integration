@@ -1,150 +1,141 @@
-# AWS Lambda Integration — Image Processor
+# WhatsApp AI Bot — Moda Trujillo
 
-Pipeline serverless en AWS que recibe imágenes vía API Gateway, las almacena en S3 y las procesa de forma asíncrona con Lambda para generar miniaturas circulares de 40×40 px.
+A serverless WhatsApp chatbot for a retail store, built with Python on AWS Lambda. Handles product catalog browsing, price inquiries, and order placement — all through WhatsApp conversations.
 
-## Arquitectura
+**Live demo available on request.**
 
-```
-Client
-  │  POST /upload
-  ▼
-API Gateway HTTP v2
-  ▼
-upload-lambda (subred privada)
-  │  sube imagen a S3
-  ▼
-S3 Bucket (uploads/)
-  │  notificación ObjectCreated
-  ▼
-SQS Queue
-  ▼
-crop-lambda (subred privada)
-  │  recorta a 40×40 circular con sharp
-  ▼
-S3 Bucket (processed/)
-```
+---
 
-Todo el tráfico entre las funciones Lambda y los servicios AWS viaja por la red interna mediante VPC Endpoints.
+## Features
 
-## Entornos
+- Conversational menu with 4 flows: catalog, pricing, orders, order history
+- Natural language understanding (handles variations like "quiero un polo", "cuánto cuesta el jean")
+- Stock availability check before confirming orders
+- Serverless architecture — scales automatically, zero server maintenance
+- Response time under 1 second
 
-| Entorno | VPC CIDR | Retención logs | Memoria crop |
-|---------|----------|----------------|--------------|
-| dev | 10.0.0.0/16 | 7 días | 512 MB |
-| qa | 10.1.0.0/16 | 14 días | 512 MB |
-| prod | 10.2.0.0/16 | 30 días | 1024 MB |
+## Tech Stack
 
-## Requisitos
+| Layer | Technology |
+|---|---|
+| Messaging channel | WhatsApp (via Twilio) |
+| Compute | AWS Lambda (Python 3.13) |
+| API | AWS API Gateway (HTTP API) |
+| Language | Python 3.13 |
+| WhatsApp SDK | Twilio Helper Library |
 
-- Terraform v1.5 o superior
-- AWS CLI v2
-- Node.js 20 LTS
-- Credenciales AWS configuradas
-
-Para configurar las credenciales:
+## Architecture
 
 ```
-aws configure
+Customer (WhatsApp)
+        │
+        ▼
+  Twilio Sandbox
+        │  POST /webhook
+        ▼
+AWS API Gateway
+        │  trigger
+        ▼
+  AWS Lambda
+  lambda_function.py
+        │
+        ▼
+  TwiML Response
+        │
+        ▼
+Customer receives reply
 ```
 
-## Instalación
-
-Instalar dependencias de las funciones Lambda:
+## Project Structure
 
 ```
-cd lambda_src/upload
-npm install
+moda-trujillo-bot/
+├── lambda_function.py   # Main handler — all bot logic
+├── package/             # Dependencies (Twilio SDK + deps)
+├── bot.zip              # Deployment package for Lambda
+└── README.md
 ```
 
-Para crop, sharp necesita compilarse para Linux:
+## How It Works
+
+1. Customer sends a WhatsApp message to the Twilio number
+2. Twilio forwards the request as HTTP POST to the API Gateway endpoint
+3. Lambda parses the message body, runs it through the conversation logic
+4. Returns a TwiML XML response that Twilio delivers back to the customer
+
+## Bot Conversation Flow
 
 ```
-cd lambda_src/crop
-npm install --platform=linux --arch=x64 sharp
+Customer: "hola"
+Bot: Welcome menu (4 options)
+
+Customer: "1"
+Bot: Full product catalog with prices and availability
+
+Customer: "quiero un polo"
+Bot: Order confirmation with sizes, price, next steps
+
+Customer: "2" or "precio jean"
+Bot: Price, stock status, available sizes
 ```
 
-## Despliegue
+## Setup & Deployment
 
-Inicializar Terraform:
+### Prerequisites
+- AWS account
+- Twilio account with WhatsApp Sandbox enabled
+- Python 3.10+
 
-```
-terraform init
-```
+### Local setup
 
-Desplegar el entorno deseado:
-
-```
-terraform apply -var-file=environments/dev/terraform.tfvars
-terraform apply -var-file=environments/qa/terraform.tfvars
-terraform apply -var-file=environments/prod/terraform.tfvars
-```
-
-Al terminar se muestran los outputs con el endpoint, el bucket y los nombres de las funciones.
-
-## Prueba
-
-```
-curl -X POST https://XXXX.execute-api.us-east-1.amazonaws.com/upload \
-  -F "file=@imagen.jpg"
+```bash
+git clone https://github.com/YOUR_USERNAME/moda-trujillo-bot
+cd moda-trujillo-bot
+pip install twilio -t package/
+cp lambda_function.py package/
+cd package && zip -r ../bot.zip .
 ```
 
-También se puede probar desde Postman con método POST y el archivo en form-data.
+### Deploy to AWS Lambda
 
-## Destruir recursos
+1. Create a Lambda function (Python 3.13, x86_64)
+2. Upload `bot.zip` via the AWS Console
+3. Add an HTTP API Gateway trigger (open security)
+4. Copy the API Gateway endpoint URL
 
-```
-terraform destroy -var-file=environments/dev/terraform.tfvars
-terraform destroy -var-file=environments/qa/terraform.tfvars
-terraform destroy -var-file=environments/prod/terraform.tfvars
-```
+### Configure Twilio
 
-## Recursos creados por entorno
+1. Go to Twilio Console → Messaging → Try it out → WhatsApp Sandbox
+2. In **Sandbox settings**, paste the API Gateway URL in "When a message comes in"
+3. Set method to **POST**
+4. Save
 
-| Recurso | Nombre |
-|---------|--------|
-| VPC | image-processor-{env}-vpc |
-| Subnets | image-processor-{env}-private-a/b |
-| NAT Gateways | image-processor-{env}-nat-a/b |
-| S3 Bucket | image-processor-{env}-images-{hash} |
-| SQS Queue | image-processor-{env}-image-queue |
-| SQS DLQ | image-processor-{env}-image-dlq |
-| Lambda Upload | image-processor-{env}-upload |
-| Lambda Crop | image-processor-{env}-crop |
-| API Gateway | image-processor-{env}-api |
-| IAM Roles | image-processor-{env}-*-role |
-| CloudWatch Alarm | image-processor-{env}-dlq-alarm |
+### Test
 
-## Estructura del proyecto
+Send `hola` to your Twilio WhatsApp sandbox number. The bot should respond with the welcome menu.
 
-```
-aws-lambda-integration/
-├── main.tf
-├── variables.tf
-├── outputs.tf
-├── environments/
-│   ├── dev/terraform.tfvars
-│   ├── qa/terraform.tfvars
-│   └── prod/terraform.tfvars
-├── modules/
-│   ├── vpc/
-│   ├── s3/
-│   ├── sqs/
-│   ├── lambda/
-│   ├── api_gateway/
-│   ├── iam/
-│   └── cloudwatch/
-└── lambda_src/
-    ├── upload/
-    └── crop/
+## Customization
+
+To adapt this bot for a different business, edit the `CATALOGO` dictionary in `lambda_function.py`:
+
+```python
+CATALOGO = {
+    "producto_key": {
+        "nombre": "Display Name",
+        "precio": 99,
+        "stock": True,
+        "tallas": ["S", "M", "L"]
+    },
+}
 ```
 
-## Seguridad
+No other changes needed for basic catalog customization.
 
-- Las funciones Lambda corren en subnets privadas
-- El tráfico a S3 y SQS va por VPC Endpoints
-- El bucket S3 tiene acceso público bloqueado y cifrado AES-256
-- Los roles IAM tienen mínimo privilegio
+---
 
-## Autor
+## About
 
-Angel Salva — UPAO 2026
+Built as a portfolio project demonstrating serverless WhatsApp automation on AWS.  
+Stack: Python · AWS Lambda · API Gateway · Twilio WhatsApp API
+
+Open to freelance projects — [Upwork profile](https://www.upwork.com)
